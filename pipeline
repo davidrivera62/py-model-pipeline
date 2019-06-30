@@ -1,0 +1,143 @@
+pipeline {
+  agent {
+    label 'pydataops'
+  }
+  stages {
+    stage('Descarga Codigo') {
+            steps {
+            cleanWs()
+            git branch: 'master', changelog: false, credentialsId: 'Github', poll: false, url: 'https://github.com/davidrivera62/py-model.git'
+          }
+    }
+    stage('Preparacion de los Datos') {
+            steps {
+            echo "descarga de datos"
+            sh 'python dataprep.py'
+            sh 'rm -rf /mnt/dataprep.csv && cp -ar dataprep.csv /mnt/'
+            sh 'rm -rf /mnt/exog.csv && cp -ar exog.csv /mnt/'
+          }
+    }
+    stage('Ejecucion Modelo') {
+            steps {
+            sh 'python model.py'
+            sh 'rm -rf /mnt/comparacion.csv /mnt/datafitted.png /mnt/Error.csv /mnt/forecasting.png /mnt/diagnosis.png /mnt/decomposition.png /mnt/TSoriginal.png /mnt/Model_Results.png /mnt/diagnosis.png'
+            sh 'cp -ar aicbic.csv comparacion.csv datafitted.png Error.csv forecasting.png diagnosis.png decomposition.png TSoriginal.png Model_Results.png diagnosis.png /mnt'
+            echo "modelo"
+          }
+    }
+    stage('Orquestacion Doble'){
+    parallel {
+        stage('Validacion Cientifico') {
+          stages {
+            stage ('Prueba modelo') {
+        agent {
+            label "pydataops"
+        }
+            steps {
+                cleanWs()
+                git branch: 'master', changelog: false, credentialsId: 'Github', poll: false, url: 'https://github.com/davidrivera62/py-model.git'
+                sh 'cp -ar /mnt/aicbic.csv .'
+                sh 'python validacion.py'
+                }
+            }
+        stage('Deploy_Cientifico') {
+            steps {
+                sh 'echo Deploy_Cientifico'
+                git branch: 'master', changelog: false, credentialsId: 'Github', poll: false, url: 'https://github.com/davidrivera62/ds-test.git'
+                sh 'rm -rf *.csv *.png'
+                sh 'cp -ar /mnt/Model_Results.png /mnt/diagnosis.png .'
+                sh 'echo $(date) > creacion.txt'
+                withCredentials([usernamePassword(credentialsId:'Github', passwordVariable: 'password',usernameVariable: 'userName')])  {
+                    sh 'git config --global user.email \"jenkins@dataops.com\"'
+                    sh 'git config --global user.name \"jenkins\"'
+                    sh 'git commit -a -m \"Publicacion automatica UAT\"'
+                    sh 'git push -f https://${userName}:${password}@github.com/davidrivera62/ds-test.git'
+                }
+
+                }
+            }
+
+    stage('Aprobacion') {
+      input{
+        message "Press Ok to continue"
+        submitter "user1,user2"
+        parameters {
+          string(name:'username', defaultValue: 'user', description: 'Username of the user pressing Ok')
+          }
+        }
+        steps {
+          echo "User: ${username} said Ok."
+          }
+      }
+          }
+        }
+            stage('Analisis_Estatico') {
+            agent {
+                label "sonar-scanner"
+            }
+            environment {
+              scannerHome = tool 'sonar-scanner'
+            }
+            steps {
+                sh 'echo Analisis_Estatico'
+                git branch: 'master', changelog: false, credentialsId: 'Github', poll: false, url: 'https://github.com/davidrivera62/py-model.git'
+                withSonarQubeEnv('Sonar-server') {
+                  sh "${scannerHome}/bin/sonar-scanner -Dproject.settings=sonar-properties"
+                  }
+                  timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                  }
+                }
+            }
+        }
+      
+    }
+
+    stage('Deploy_UAT') {
+            steps {
+                sh 'echo Deploy_UAT'
+                git branch: 'master', changelog: false, credentialsId: 'Github', poll: false, url: 'https://github.com/davidrivera62/dataops-uat.git'
+                sh 'rm -rf *.csv *.png'
+                sh 'cp -ar /mnt/*.png .'
+                sh 'cp -ar /mnt/*.csv .'
+                sh 'echo $(date) > creacion.txt'
+                withCredentials([usernamePassword(credentialsId:'Github', passwordVariable: 'password',usernameVariable: 'userName')])  {
+                    sh 'git config --global user.email \"jenkins@dataops.com\"'
+                    sh 'git config --global user.name \"jenkins\"'
+                    sh 'git commit -a -m \"Publicacion automatica UAT\"'
+                    sh 'git push -f https://${userName}:${password}@github.com/davidrivera62/dataops-uat.git'
+                }
+
+                }
+            }
+    stage('Aprobacion') {
+      input{
+        message "Press Ok to continue"
+        submitter "user1,user2"
+        parameters {
+          string(name:'username', defaultValue: 'user', description: 'Username of the user pressing Ok')
+          }
+        }
+        steps {
+          echo "User: ${username} said Ok."
+          }
+      }
+    stage('Deploy_PDN') {
+            steps {
+            sh 'echo Deploy PDN'
+            git branch: 'master', changelog: false, credentialsId: 'Github', poll: false, url: 'https://github.com/davidrivera62/davidrivera62.github.io.git'
+            sh 'rm -rf *.csv *.png'
+            sh 'cp -ar /mnt/*.png .'
+            sh 'cp -ar /mnt/*.csv .'
+            sh 'echo $(date) > creacion.txt'
+            withCredentials([usernamePassword(credentialsId:'Github', passwordVariable: 'password',usernameVariable: 'userName')])  {
+                sh 'git config --global user.email \"jenkins@dataops.com\"'
+                sh 'git config --global user.name \"jenkins\"'
+                sh 'git commit -a -m \"Publicacion automatica PDN\"'
+                sh 'git push -f https://${userName}:${password}@github.com/davidrivera62/davidrivera62.github.io.git'
+            }
+                }
+            }
+
+    }
+}
